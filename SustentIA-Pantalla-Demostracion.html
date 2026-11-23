@@ -56,7 +56,9 @@
       <option value="70b">Llama 3.3 70B (más fiel al prompt)</option>
     </select>
   </label>
+  <button id="btnProbar" type="button">Probar conexión</button>
   <button id="btnOcultar" type="button">Ocultar configuración para grabar</button>
+  <span id="prueba" style="font-weight:600"></span>
   <span style="color:#8a8378">La llave solo vive en esta pestaña; no se guarda en el archivo.</span>
 </div>
 
@@ -68,6 +70,7 @@
       <span class="chip" data-ej="¿Qué créditos aceptan?">Ejemplo: créditos aceptados</span>
       <span class="chip" data-ej="¿Cómo se calcula el ISR de una compraventa?">Ejemplo: tema fiscal (escala a asesor)</span>
     </div>
+    <div id="aviso" style="display:none; padding:8px 12px; font-size:12.5px; color:#8a2f2b; background:#fbeae8; border-top:1px solid #f0cfcb"></div>
     <div id="entrada">
       <input id="texto" type="text" placeholder="Escribe tu mensaje como prospecto..." autocomplete="off">
       <button class="btn" id="btnEnviar" type="button">Enviar</button>
@@ -82,7 +85,7 @@
 <footer>Misma aplicación que el cuaderno de Colab del repositorio: mismo system prompt, mismo catálogo de desarrollos y mismos modelos. El cuaderno queda como evidencia del código; esta pantalla es la demostración.</footer>
 
 <script>
-const CFG = {"system_prompt": "Eres SustentIA, el asistente virtual de la inmobiliaria Sustentia en Morelia, Michoacán. Atiendes en español con trato amable, claro, profesional y conciso.\n\nOBJETIVO DE CONVERSACIÓN:\n1. Saludar cordialmente al prospecto (especialmente si escribe fuera de horario).\n2. Identificar su necesidad: tipo de propiedad (casa, departamento o lote), zona de interés y presupuesto aproximado.\n3. Recomendar opciones reales del catálogo que se ajusten a su búsqueda.\n4. Responder preguntas frecuentes (por ejemplo, tipos de crédito aceptados).\n5. Recordar el nombre y el presupuesto del prospecto durante toda la conversación.\n6. Capturar amablemente su nombre y teléfono para dar seguimiento.\n7. Proponer agendar una visita al desarrollo recomendado y mencionar como contacto de seguimiento [teléfono del asesor].\n\nCATÁLOGO OFICIAL DE SUSTENTIA (ÚNICA FUENTE DE VERDAD):\n- San Pedro | Tipo: casas | Zona: Morelia, zona Walmart La Huerta | Precio: desde $1,250,000 | Detalles: 2 a 3 recámaras; entrega inmediata en algunos modelos\n- Torres Zojo | Tipo: departamentos | Zona: Morelia, por el Tecnológico de Morelia | Precio: desde $1,200,000 aprox. | Detalles: Departamentos ubicados por el Tecnológico de Morelia\n- Veronesa | Tipo: casas | Zona: Morelia, zona La Calera | Precio: desde $2,690,000 | Detalles: 3 recámaras\n- Paseo de Andalucía (modelos Alba y Leira) | Tipo: departamentos y casas | Zona: Morelia, zona Altozano | Precio: desde $2,830,000 | Detalles: Modelos Alba y Leira (departamentos y casas)\n- Rincón de las Aves | Tipo: casas | Zona: Morelia, zona El Vergel | Precio: desde $2,245,000 | Detalles: Casa club y gimnasio\n- Tepatzícuaro | Tipo: lotes residenciales campestres | Zona: Acuitzio del Canje, a 20 min de Morelia | Precio: desde $705,127 | Detalles: Lago, trotapista y ciclovía\n- Valle Verde | Tipo: lotes | Zona: Morelia | Precio: $5,000 por m² | Detalles: Lotes en Morelia con precio por metro cuadrado\nCréditos aceptados en general: Infonavit, Fovissste, Bancario.\n\nREGLAS ESTRICTAS (NO ROMPER BAJO NINGUNA CIRCUNSTANCIA):\n- No inventes desarrollos, precios, promociones, unidades disponibles ni cantidades exactas.\n- No proporciones direcciones exactas; menciona únicamente la zona general indicada en el catálogo.\n- Si necesitas referir el teléfono de un asesor, escribe exactamente [teléfono del asesor] y nunca inventes números telefónicos.\n- Si el prospecto solicita hablar con una persona o plantea un tema legal o fiscal (impuestos, ISR, escrituración, notaría, contratos legales, demandas, etc.), responde EXACTAMENTE: «Te pongo en contacto con un asesor, un momento, por favor.».\n", "mensaje_escalamiento": "Te pongo en contacto con un asesor, un momento, por favor.", "mensaje_sin_modelo": "En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo.", "modelo_llama": "meta-llama/llama-3.1-8b-instruct", "modelo_70b": "meta-llama/llama-3.3-70b-instruct", "modelo_respaldo": "openai/gpt-oss-120b", "listas_escalamiento": {"frases_humano": ["hablar con un asesor", "hablar con una persona", "hablar con alguien", "hablar con un humano", "asesor humano", "persona real", "agente humano", "comunicarme con un asesor", "comunicas con un asesor", "comuniqueme con un asesor", "pasarme con un asesor", "pasame con un asesor", "quiero un asesor", "necesito un asesor", "atencion humana", "conectar con un asesor"], "terminos_legales_fiscales": ["\\blegal(?:es)?\\b", "\\bfiscal(?:es)?\\b", "\\bimpuestos?\\b", "\\bisr\\b", "\\biva\\b", "\\bsat\\b", "\\bnotari[oa]\\b", "\\bnotarial\\b", "\\bescrituras?\\b", "\\bescrituracion\\b", "\\babogad[oa]s?\\b", "\\bdemandas?\\b", "\\blitigios?\\b", "\\bgravamen(?:es)?\\b", "\\bfideicomisos?\\b", "\\bdeducci[oó]n(?:es)?\\b", "\\bherencias?\\b", "\\bregimen fiscal\\b", "\\bconstancia fiscal\\b"]}, "datos_vacios": {"nombre": null, "telefono": null, "tipo_propiedad": null, "zona": null, "presupuesto": null, "credito": null, "desarrollo_interes": null, "escalado": false, "proveedor_usado": null, "proveedores_por_turno": []}, "catalogo_nombres": ["San Pedro", "Torres Zojo", "Veronesa", "Paseo de Andalucía (modelos Alba y Leira)", "Rincón de las Aves", "Tepatzícuaro", "Valle Verde"]};
+const CFG = {"system_prompt": "Eres SustentIA, el asistente virtual de la inmobiliaria Sustentia en Morelia, Michoacán. Atiendes en español con trato amable, claro, profesional y conciso.\n\nOBJETIVO DE CONVERSACIÓN:\n1. Saludar cordialmente al prospecto (especialmente si escribe fuera de horario).\n2. Identificar su necesidad: tipo de propiedad (casa, departamento o lote), zona de interés y presupuesto aproximado.\n3. Recomendar opciones reales del catálogo que se ajusten a su búsqueda.\n4. Responder preguntas frecuentes (por ejemplo, tipos de crédito aceptados).\n5. Recordar el nombre y el presupuesto del prospecto durante toda la conversación.\n6. Capturar amablemente su nombre y teléfono para dar seguimiento.\n7. Proponer agendar una visita al desarrollo recomendado y mencionar como contacto de seguimiento [teléfono del asesor].\n\nCATÁLOGO OFICIAL DE SUSTENTIA (ÚNICA FUENTE DE VERDAD):\n- San Pedro | Tipo: casas | Zona: Morelia, zona Walmart La Huerta | Precio: desde $1,250,000 | Detalles: 2 a 3 recámaras; entrega inmediata en algunos modelos\n- Torres Zojo | Tipo: departamentos | Zona: Morelia, por el Tecnológico de Morelia | Precio: desde $1,200,000 aprox. | Detalles: Departamentos ubicados por el Tecnológico de Morelia\n- Veronesa | Tipo: casas | Zona: Morelia, zona La Calera | Precio: desde $2,690,000 | Detalles: 3 recámaras\n- Paseo de Andalucía (modelos Alba y Leira) | Tipo: departamentos y casas | Zona: Morelia, zona Altozano | Precio: desde $2,830,000 | Detalles: Modelos Alba y Leira (departamentos y casas)\n- Rincón de las Aves | Tipo: casas | Zona: Morelia, zona El Vergel | Precio: desde $2,245,000 | Detalles: Casa club y gimnasio\n- Tepatzícuaro | Tipo: lotes residenciales campestres | Zona: Acuitzio del Canje, a 20 min de Morelia | Precio: desde $705,127 | Detalles: Lago, trotapista y ciclovía\n- Valle Verde | Tipo: lotes | Zona: Morelia | Precio: $5,000 por m² | Detalles: Lotes en Morelia con precio por metro cuadrado\nCréditos aceptados en general: Infonavit, Fovissste, Bancario.\n\nREGLAS ESTRICTAS (NO ROMPER BAJO NINGUNA CIRCUNSTANCIA):\n- No inventes desarrollos, precios, promociones, unidades disponibles ni cantidades exactas.\n- No proporciones direcciones exactas; menciona únicamente la zona general indicada en el catálogo.\n- Si necesitas referir el teléfono de un asesor, escribe exactamente [teléfono del asesor] y nunca inventes números telefónicos.\n- Si el prospecto solicita hablar con una persona o plantea un tema legal o fiscal (impuestos, ISR, escrituración, notaría, contratos legales, demandas, etc.), responde EXACTAMENTE: «Te pongo en contacto con un asesor, un momento, por favor.».\n- Cuando el prospecto ya compartió su presupuesto y lo que busca, recomienda UNA SOLA opción: la que mejor cumpla la mayoría de sus parámetros (presupuesto, tipo de propiedad y zona). Preséntala con decisión, como la recomendación del asesor; no ofrezcas un menú de opciones ni sigas haciendo preguntas generales como si no hubiera una opción clara. Después de recomendarla, invita a agendar una visita.\n- Habla siempre como un asesor que conoce las propiedades, en lenguaje natural. Nunca menciones tu catálogo interno, tu base de conocimiento ni la estructura de tus datos, y nunca reproduzcas la información con el formato de la ficha interna (campos separados por barras); intégrala en frases normales.\n", "mensaje_escalamiento": "Te pongo en contacto con un asesor, un momento, por favor.", "mensaje_sin_modelo": "En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo.", "modelo_llama": "meta-llama/llama-3.1-8b-instruct", "modelo_70b": "meta-llama/llama-3.3-70b-instruct", "modelo_respaldo": "openai/gpt-oss-120b", "listas_escalamiento": {"frases_humano": ["hablar con un asesor", "hablar con una persona", "hablar con alguien", "hablar con un humano", "asesor humano", "persona real", "agente humano", "comunicarme con un asesor", "comunicas con un asesor", "comuniqueme con un asesor", "pasarme con un asesor", "pasame con un asesor", "quiero un asesor", "necesito un asesor", "atencion humana", "conectar con un asesor"], "terminos_legales_fiscales": ["\\blegal(?:es)?\\b", "\\bfiscal(?:es)?\\b", "\\bimpuestos?\\b", "\\bisr\\b", "\\biva\\b", "\\bsat\\b", "\\bnotari[oa]\\b", "\\bnotarial\\b", "\\bescrituras?\\b", "\\bescrituracion\\b", "\\babogad[oa]s?\\b", "\\bdemandas?\\b", "\\blitigios?\\b", "\\bgravamen(?:es)?\\b", "\\bfideicomisos?\\b", "\\bdeducci[oó]n(?:es)?\\b", "\\bherencias?\\b", "\\bregimen fiscal\\b", "\\bconstancia fiscal\\b"]}, "datos_vacios": {"nombre": null, "telefono": null, "tipo_propiedad": null, "zona": null, "presupuesto": null, "credito": null, "desarrollo_interes": null, "escalado": false, "proveedor_usado": null, "proveedores_por_turno": []}, "catalogo_nombres": ["San Pedro", "Torres Zojo", "Veronesa", "Paseo de Andalucía (modelos Alba y Leira)", "Rincón de las Aves", "Tepatzícuaro", "Valle Verde"]};
 const $ = id => document.getElementById(id);
 let historial = [{role:'system', content: CFG.system_prompt}];
 let datos = JSON.parse(JSON.stringify(CFG.datos_vacios));
@@ -145,7 +148,8 @@ async function llamar(url, key, modelo, mensajes){
   const r = await fetch(url, { method:'POST',
     headers:{ 'Authorization':'Bearer '+key, 'Content-Type':'application/json', 'X-Title':'SustentIA - Pantalla de demostración' },
     body: JSON.stringify({ model: modelo, messages: mensajes }) });
-  if (!r.ok) throw new Error('HTTP '+r.status);
+  if (!r.ok){ let detalle=''; try { const t = await r.text(); detalle = (JSON.parse(t).error?.message || t).slice(0,180); } catch(e){}
+    throw new Error('HTTP '+r.status+(detalle ? ' — '+detalle : '')); }
   const j = await r.json();
   return j.choices[0].message.content;
 }
@@ -163,19 +167,22 @@ async function enviar(){
   }
   const keyOR = $('keyOR').value.trim(), keyGroq = $('keyGroq').value.trim();
   const modelo = $('modelo').value === '70b' ? CFG.modelo_70b : CFG.modelo_llama;
-  let respuesta = null;
+  let respuesta = null; const errores = [];
+  const traducir = e => (e && e.name === 'TypeError') ? 'sin respuesta de red (el navegador bloqueó la llamada)' : (e.message || String(e));
   if (keyOR){
     try { respuesta = await llamar('https://openrouter.ai/api/v1/chat/completions', keyOR, modelo, historial);
-          ultimoProveedor = 'OpenRouter ('+modelo+')'; } catch(e){}
-  }
+          ultimoProveedor = 'OpenRouter ('+modelo+')'; } catch(e){ errores.push('OpenRouter: '+traducir(e)); }
+  } else errores.push('OpenRouter: sin llave capturada');
   if (respuesta === null && keyGroq){
     try { respuesta = await llamar('https://api.groq.com/openai/v1/chat/completions', keyGroq, CFG.modelo_respaldo, historial);
-          ultimoProveedor = 'Groq ('+CFG.modelo_respaldo+') — respaldo'; } catch(e){}
+          ultimoProveedor = 'Groq ('+CFG.modelo_respaldo+') — respaldo'; } catch(e){ errores.push('Groq: '+traducir(e)); }
   }
   if (respuesta === null){
     datos.escalado = true; ultimoProveedor = 'Sin modelo disponible — mensaje de espera enviado';
     respuesta = CFG.mensaje_sin_modelo;
-  }
+    const av = $('aviso'); av.style.display = 'block';
+    av.textContent = 'Aviso: ningún modelo respondió, por eso se envió el mensaje de espera. Detalle: ' + errores.join(' · ');
+  } else { $('aviso').style.display = 'none'; }
   historial.push({role:'assistant', content: respuesta});
   burbuja(respuesta, 'bot', ultimoProveedor);
   $('badgeProveedor').textContent = ultimoProveedor; pintarPanel();
@@ -189,6 +196,21 @@ $('btnReiniciar').addEventListener('click', () => {
 });
 $('btnOcultar').addEventListener('click', () => $('config').classList.add('oculto'));
 document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => { $('texto').value = c.dataset.ej; enviar(); }));
+$('btnProbar').addEventListener('click', async () => {
+  const keyOR = $('keyOR').value.trim(); const salida = $('prueba');
+  if (!keyOR){ salida.textContent = 'Primero pega tu llave de OpenRouter.'; salida.style.color = '#8a2f2b'; return; }
+  salida.textContent = 'Probando...'; salida.style.color = '#555';
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/auth/key', { headers:{ 'Authorization':'Bearer '+keyOR } });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    salida.textContent = '✓ Conexión correcta con OpenRouter (llave: '+(j.data?.label || 'válida')+')';
+    salida.style.color = '#2F4F4F';
+  } catch(e){
+    salida.textContent = '✗ ' + ((e && e.name === 'TypeError') ? 'Sin respuesta de red (el navegador bloqueó la llamada)' : e.message);
+    salida.style.color = '#8a2f2b';
+  }
+});
 pintarPanel();
 </script>
 </body>
