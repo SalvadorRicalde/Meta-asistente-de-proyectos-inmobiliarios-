@@ -132,4 +132,5 @@ Flujo esperado con un modelo activo (el teléfono `443-000-0000` es un dato fict
 - **Script modular:** [`asistente.py`](./asistente.py)
 - **Documentación:** [`README.md`](./README.md)
 - **Video de presentación:** Mostrar la ejecución del notebook en Google Colab explicando la estrategia de prompts, la memoria por turnos, la captura de prospectos y el escalamiento.
+- **Pantalla de demostración:** [`SustentIA-Pantalla-Demostracion.html`](./SustentIA-Pantalla-Demostracion.html) — el mismo asistente (mismo system prompt, catálogo y modelos, generados desde `asistente.py`) en una pantalla de chat para mostrarlo funcionando; el cuaderno queda como evidencia del código.
 - **Siguientes pasos del proyecto:** guardar los prospectos capturados en el CRM de Sustentia, alimentar el catálogo desde el inventario real y correr el asistente como una aplicación pequeña para probarlo con asesores reales; el núcleo (`conversar(mensaje, historial)`) ya está desacoplado de Colab para facilitarlo.
