@@ -6,12 +6,12 @@ Proyecto desarrollado para el **Hackathon 1** del curso **Inteligencia Artificia
 
 - **Problema real:** Los prospectos de la inmobiliaria **Sustentia** (Morelia, Michoacán) suelen escribir fuera de horario laboral esperando respuesta inmediata. Sin atención oportuna ni precalificación inicial, los asesores pierden oportunidades de venta.
 - **Usuario claro:** El prospecto interesado en adquirir una casa, departamento o lote residencial en Morelia o su zona de influencia.
-- **Solución:** Un asistente conversacional impulsado por **Llama (`meta-llama/llama-3.1-8b-instruct`)** de Meta vía **OpenRouter** como proveedor principal, con **respaldo automático en Groq (`openai/gpt-oss-120b`)** y **escalamiento a un asesor humano** si ningún modelo está disponible. Atiende en todo momento: saluda, identifica tipo de propiedad, zona y presupuesto, recomienda desarrollos reales del catálogo, responde preguntas frecuentes sobre créditos, recuerda nombre y presupuesto durante la charla, captura datos de contacto, propone agendar una visita y escala a un asesor humano cuando corresponde.
+- **Solución:** Un asistente conversacional impulsado por **Llama (`meta-llama/llama-3.1-8b-instruct`)** de Meta vía **OpenRouter** como proveedor principal, con **respaldo automático en Groq (`openai/gpt-oss-120b`)** y un **mensaje predefinido de espera con escalamiento a un asesor** si ningún modelo está disponible. Atiende en todo momento: saluda, identifica tipo de propiedad, zona y presupuesto, recomienda desarrollos reales del catálogo, responde preguntas frecuentes sobre créditos, recuerda nombre y presupuesto durante la charla, captura datos de contacto, propone agendar una visita y escala a un asesor humano cuando corresponde.
 
 > **Transparencia sobre los proveedores y modelos:**
 > - **Principal:** **OpenRouter** (`https://openrouter.ai/api/v1`) con **`meta-llama/llama-3.1-8b-instruct`** (o `meta-llama/llama-3.3-70b-instruct`), puerta de acceso a los modelos Llama de Meta con interfaz compatible con OpenAI (Groq retiró el acceso *self-serve* a sus modelos Llama de chat).
 > - **Respaldo automático de continuidad:** **Groq** (`https://api.groq.com/openai/v1`) con **`openai/gpt-oss-120b`** usando el mismo SDK `openai`. Con total honestidad: **`openai/gpt-oss-120b` NO es un modelo Llama**; su función es mantener la continuidad operativa si OpenRouter falla o se agotan sus créditos (errores 402, 401, 429, red o servidor).
-> - **Sin modelo disponible (asesor humano):** El asistente no funciona sin un modelo real. Si OpenRouter deja de responder y el respaldo de Groq también falla, el asistente no contesta con respuestas prefabricadas: pasa la conversación a un asesor humano. Preferí eso a que un prospecto reciba una respuesta que ningún modelo generó.
+> - **Sin modelo disponible (mensaje de espera):** Si OpenRouter deja de responder y el respaldo de Groq también falla, el prospecto recibe un mensaje predefinido —«En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo»— y la conversación queda marcada para que un asesor la atienda.
 
 ---
 
@@ -46,16 +46,17 @@ flowchart LR
     OR -- "Sin llave" --> GROQ{"¿Groq disponible?"}
     LLAMA -- "Error 402/401/429/red/5xx" --> GROQ
     GROQ -- "Sí" --> GPTOSS["Respaldo: Groq (openai/gpt-oss-120b, no Llama)"]
-    GROQ -- "Sin llave" --> M_ESC
+    GROQ -- "Sin llave" --> M_ESP["Mensaje de espera + escalado: En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo."]
     LLAMA -- "OK" --> R["Respuesta + proveedor_usado y actualización de memoria"]
     GPTOSS -- "OK" --> R
-    GPTOSS -- "Error" --> M_ESC
+    GPTOSS -- "Error" --> M_ESP
     M_ESC --> R
+    M_ESP --> R
 ```
 
 Componentes principales (presentes tanto en [`Asistente_Inteligente_con_Llama_SustentIA.ipynb`](./Asistente_Inteligente_con_Llama_SustentIA.ipynb) como en [`asistente.py`](./asistente.py)):
 
-1. **Cadena de proveedores (`OpenRouter (Llama) → Groq (respaldo) → asesor humano`):** Usa el SDK `openai` apuntando primero a **OpenRouter** (`https://openrouter.ai/api/v1`, `meta-llama/llama-3.1-8b-instruct`, con opción `meta-llama/llama-3.3-70b-instruct`) y, ante cualquier error (`402`, `401`, `429`, red o servidor), reintenta automáticamente el mismo turno con **Groq** (`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, que no es Llama sino respaldo de continuidad) sin interrumpir la charla ni perder el historial. Ambas llaves (`OPENROUTER_API_KEY` y `GROQ_API_KEY`) se leen desde `google.colab.userdata`, variables de entorno o `getpass` (nunca escritas en código). Si solo existe una llave, se trabaja con ese proveedor y el otro escalón se salta; si no hay llaves configuradas o ambos proveedores fallan, marca `escalado=True`, registra `Sin modelo disponible — escalado a asesor` y devuelve `MENSAJE_ESCALAMIENTO` (handoff a un asesor humano, sin respuestas prefabricadas). Cada turno registra el proveedor efectivo en `proveedor_usado`.
+1. **Cadena de proveedores (`OpenRouter (Llama) → Groq (respaldo) → mensaje de espera`):** Usa el SDK `openai` apuntando primero a **OpenRouter** (`https://openrouter.ai/api/v1`, `meta-llama/llama-3.1-8b-instruct`, con opción `meta-llama/llama-3.3-70b-instruct`) y, ante cualquier error (`402`, `401`, `429`, red o servidor), reintenta automáticamente el mismo turno con **Groq** (`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, que no es Llama sino respaldo de continuidad) sin interrumpir la charla ni perder el historial. Ambas llaves (`OPENROUTER_API_KEY` y `GROQ_API_KEY`) se leen desde `google.colab.userdata`, variables de entorno o `getpass` (nunca escritas en código). Si solo existe una llave, se trabaja con ese proveedor y el otro escalón se salta; si no hay llaves configuradas o ambos proveedores fallan, el prospecto recibe el mensaje predefinido de espera (`MENSAJE_SIN_MODELO`: *«En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo.»*), se marca `escalado=True` para que un asesor la atienda y se registra `Sin modelo disponible — mensaje de espera enviado`. En todos los turnos, `proveedor_usado` conserva la trazabilidad del proveedor efectivo.
 2. **System prompt con catálogo inyectado:** `formatear_catalogo_para_prompt()` y `construir_system_prompt()` convierten la lista estructurada de desarrollos en el contexto oficial del modelo.
 3. **Memoria de conversación:** `crear_historial()`, `agregar_mensaje()` y `recortar_historial()` mantienen el historial por turnos preservando el `system prompt` y permitiendo recordar nombre y presupuesto.
 4. **Captura de datos del prospecto:** `capturar_datos_prospecto()` extrae automáticamente `nombre`, `telefono`, `tipo_propiedad`, `zona`, `presupuesto`, `credito` y `desarrollo_interes` en un diccionario estructurado.
@@ -100,7 +101,7 @@ export GROQ_API_KEY="tu_clave_de_groq_opcional"
 python3 asistente.py
 ```
 
-Si ejecutas `python3 asistente.py` sin ninguna llave configurada, el script imprime un aviso indicando que se necesita `OPENROUTER_API_KEY` o `GROQ_API_KEY` y termina sin fingir una demo.
+Si ejecutas `python3 asistente.py` sin ninguna llave configurada, el script imprime un aviso indicando que se necesita `OPENROUTER_API_KEY` o `GROQ_API_KEY` y termina sin fingir una demo (recordando que, en una conversación real sin modelo disponible, el prospecto recibiría `MENSAJE_SIN_MODELO`).
 
 ---
 
@@ -125,10 +126,10 @@ Flujo esperado con un modelo activo (el teléfono `443-000-0000` es un dato fict
 
 ---
 
-## Entregables del Hackathon 1 y siguiente paso (Módulo 2)
+## Entregables del Hackathon 1 y siguientes pasos
 
 - **Notebook principal:** [`Asistente_Inteligente_con_Llama_SustentIA.ipynb`](./Asistente_Inteligente_con_Llama_SustentIA.ipynb)
 - **Script modular:** [`asistente.py`](./asistente.py)
 - **Documentación:** [`README.md`](./README.md)
 - **Video de presentación:** Mostrar la ejecución del notebook en Google Colab explicando la estrategia de prompts, la memoria por turnos, la captura de prospectos y el escalamiento.
-- **Conexión con el Módulo 2 (WhatsApp):** El núcleo desacoplado (`conversar(mensaje, historial)`) permite conectar fácilmente el asistente a un webhook de WhatsApp Business API (FastAPI + almacenamiento de sesiones por número telefónico) para atender prospectos reales en producción.
+- **Siguientes pasos del proyecto:** guardar los prospectos capturados en el CRM de Sustentia, alimentar el catálogo desde el inventario real y correr el asistente como una aplicación pequeña para probarlo con asesores reales; el núcleo (`conversar(mensaje, historial)`) ya está desacoplado de Colab para facilitarlo.

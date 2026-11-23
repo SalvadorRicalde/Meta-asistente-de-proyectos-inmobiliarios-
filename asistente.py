@@ -2,7 +2,7 @@
 SustentIA — Asistente Inteligente con Llama (Hackathon 1).
 
 Asistente conversacional para la inmobiliaria Sustentia (Morelia, Michoacán) con
-cadena de continuidad `OpenRouter (Llama) → Groq (respaldo) → asesor humano`
+cadena de continuidad `OpenRouter (Llama) → Groq (respaldo) → mensaje de espera`
 sobre la interfaz compatible con OpenAI:
 1. Proveedor principal: Meta Llama (`meta-llama/llama-3.1-8b-instruct`, con
    alternativa `meta-llama/llama-3.3-70b-instruct` de mayor fidelidad al prompt)
@@ -11,9 +11,11 @@ sobre la interfaz compatible con OpenAI:
    `openai/gpt-oss-120b`. Nota importante de transparencia: `openai/gpt-oss-120b`
    NO es un modelo Llama; su función es mantener la continuidad operativa si
    OpenRouter falla o agota sus créditos.
-3. Escalamiento a un asesor humano: si no hay llaves configuradas o si ambos
-   proveedores fallan, el asistente marca `escalado=True` y entrega
-   `MENSAJE_ESCALAMIENTO` sin respuestas prefabricadas.
+3. Sin modelo disponible (mensaje de espera): si no hay llaves configuradas o
+   si ambos proveedores fallan, el asistente devuelve `MENSAJE_SIN_MODELO`,
+   marca `escalado=True` y registra el proveedor del turno como
+   `Sin modelo disponible — mensaje de espera enviado` para que un asesor
+   atienda al prospecto.
 
 Atiende prospectos fuera de horario, identifica necesidad y presupuesto,
 recomienda desarrollos del catálogo sin inventar datos, recuerda la conversación,
@@ -30,7 +32,8 @@ import unicodedata
 
 # Importación opcional del SDK de OpenAI (compatible con OpenRouter y Groq):
 # permite importar el módulo aunque `openai` no esté instalado; sin paquete o
-# sin llaves disponibles, `conversar()` escala la conversación a un asesor humano.
+# sin llaves disponibles, `conversar()` devuelve `MENSAJE_SIN_MODELO` y marca
+# la conversación como escalada para seguimiento de un asesor.
 try:
     from openai import OpenAI
 except ImportError:
@@ -50,6 +53,7 @@ MODELO_RESPALDO_GROQ = "openai/gpt-oss-120b"
 CREDITOS_ACEPTADOS = ["Infonavit", "Fovissste", "Bancario"]
 CONTACTO_ASESOR = "[teléfono del asesor]"
 MENSAJE_ESCALAMIENTO = "Te pongo en contacto con un asesor, un momento, por favor."
+MENSAJE_SIN_MODELO = "En este momento no podemos atenderte, pero a primera hora un asesor se comunicará contigo."
 
 # Fuente única de verdad del catálogo de Sustentia.
 # Regla estricta: solo zonas generales, sin direcciones exactas ni inventarios de unidades.
@@ -610,7 +614,7 @@ def conversar(
 ) -> str:
     """
     Función principal del asistente con cadena de continuidad:
-    `OpenRouter (Llama) → Groq (respaldo) → asesor humano`.
+    `OpenRouter (Llama) → Groq (respaldo) → mensaje de espera`.
 
     1. Captura datos del prospecto y registra el mensaje del usuario en el historial.
     2. Evalúa reglas de escalamiento deterministas (solicitud de persona o tema legal/fiscal).
@@ -619,7 +623,7 @@ def conversar(
        principal, reintenta el mismo turno con Groq (`openai/gpt-oss-120b`, que NO es
        Llama sino respaldo de continuidad) preservando intacto el historial.
     5. Si Groq tampoco está disponible o también falla, marca `escalado=True`,
-       registra `Sin modelo disponible — escalado a asesor` y devuelve `MENSAJE_ESCALAMIENTO`.
+       registra `Sin modelo disponible — mensaje de espera enviado` y devuelve `MENSAJE_SIN_MODELO`.
     """
     datos = datos_prospecto if datos_prospecto is not None else DATOS_PROSPECTO_GLOBAL
     cliente_principal = cliente if cliente is not None else CLIENTE_OPENROUTER_GLOBAL
@@ -656,7 +660,7 @@ def conversar(
             else:
                 print(
                     f"Aviso: error en OpenRouter ({exc}). "
-                    "Sin respaldo Groq disponible; escalando a un asesor humano."
+                    "Sin respaldo Groq disponible; enviando mensaje de espera y escalando a un asesor."
                 )
 
     if cliente_groq_activo is not None:
@@ -670,13 +674,13 @@ def conversar(
         except Exception as exc:
             print(
                 f"Aviso: error en respaldo Groq ({exc}). "
-                "Sin modelos disponibles; escalando a un asesor humano."
+                "Sin modelos disponibles; enviando mensaje de espera y escalando a un asesor."
             )
 
     datos["escalado"] = True
-    _registrar_proveedor(datos, "Sin modelo disponible — escalado a asesor")
-    agregar_mensaje(historial, "assistant", MENSAJE_ESCALAMIENTO)
-    return MENSAJE_ESCALAMIENTO
+    _registrar_proveedor(datos, "Sin modelo disponible — mensaje de espera enviado")
+    agregar_mensaje(historial, "assistant", MENSAJE_SIN_MODELO)
+    return MENSAJE_SIN_MODELO
 
 
 # Estado global por defecto para invocaciones directas `conversar(mensaje, historial)`
@@ -717,7 +721,7 @@ def ejecutar_demo() -> None:
         f"Respaldo automático: Groq ({GROQ_BASE_URL}) | Modelo: {MODELO_RESPALDO_GROQ} "
         "(no es Llama; continuidad operativa)"
     )
-    print("Sin modelo disponible: escalamiento a asesor humano")
+    print("Sin modelo disponible: mensaje predefinido de espera + escalamiento a asesor")
     print("=" * 72)
 
     if cliente is None and cliente_respaldo is None:
@@ -734,8 +738,9 @@ def ejecutar_demo() -> None:
                 "para conectarse con `OPENROUTER_API_KEY` o `GROQ_API_KEY`."
             )
         print(
-            "Sin un modelo disponible, SustentIA no contesta con respuestas prefabricadas: "
-            f"escala la conversación a un asesor humano («{MENSAJE_ESCALAMIENTO}»)."
+            "En una conversación real sin modelo disponible, el prospecto recibiría el "
+            f"mensaje de espera («{MENSAJE_SIN_MODELO}») y la conversación quedaría "
+            "marcada como escalada para que un asesor la atienda."
         )
         print("=" * 72)
         return
