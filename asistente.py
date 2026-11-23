@@ -2,17 +2,18 @@
 SustentIA — Asistente Inteligente con Llama (Hackathon 1).
 
 Asistente conversacional para la inmobiliaria Sustentia (Morelia, Michoacán) con
-arquitectura de continuidad en tres niveles sobre la interfaz compatible con
-OpenAI:
+cadena de continuidad `OpenRouter (Llama) → Groq (respaldo) → asesor humano`
+sobre la interfaz compatible con OpenAI:
 1. Proveedor principal: Meta Llama (`meta-llama/llama-3.1-8b-instruct`, con
    alternativa `meta-llama/llama-3.3-70b-instruct` de mayor fidelidad al prompt)
    vía OpenRouter (`https://openrouter.ai/api/v1`).
 2. Respaldo automático: Groq (`https://api.groq.com/openai/v1`) con el modelo
    `openai/gpt-oss-120b`. Nota importante de transparencia: `openai/gpt-oss-120b`
-   NO es un modelo Llama; su función es garantizar la continuidad operativa para
-   que el asistente nunca deje de responder en producción si OpenRouter falla o
-   agota sus créditos.
-3. Último recurso: modo `[SIMULADO]` en Python local.
+   NO es un modelo Llama; su función es mantener la continuidad operativa si
+   OpenRouter falla o agota sus créditos.
+3. Escalamiento a un asesor humano: si no hay llaves configuradas o si ambos
+   proveedores fallan, el asistente marca `escalado=True` y entrega
+   `MENSAJE_ESCALAMIENTO` sin respuestas prefabricadas.
 
 Atiende prospectos fuera de horario, identifica necesidad y presupuesto,
 recomienda desarrollos del catálogo sin inventar datos, recuerda la conversación,
@@ -21,7 +22,6 @@ captura datos del prospecto y escala a un asesor humano cuando corresponde.
 
 from __future__ import annotations
 
-import argparse
 import getpass
 import os
 import re
@@ -29,8 +29,8 @@ import sys
 import unicodedata
 
 # Importación opcional del SDK de OpenAI (compatible con OpenRouter y Groq):
-# permite ejecutar el asistente en modo [SIMULADO] aun cuando el paquete
-# `openai` no esté instalado o no existan API keys.
+# permite importar el módulo aunque `openai` no esté instalado; sin paquete o
+# sin llaves disponibles, `conversar()` escala la conversación a un asesor humano.
 try:
     from openai import OpenAI
 except ImportError:
@@ -161,7 +161,6 @@ def _obtener_api_key_secreto(
 
     if (
         permitir_prompt
-        and os.environ.get("SUSTENTIA_MODO_SIMULADO") != "1"
         and ("google.colab" in sys.modules or sys.stdin.isatty())
     ):
         try:
@@ -224,20 +223,17 @@ def crear_cliente_groq(api_key: str | None = None):
 def describir_proveedor_activo(
     cliente_openrouter,
     cliente_groq,
-    forzar_simulado: bool = False,
 ) -> str:
-    """Describe de forma clara el proveedor principal y respaldo disponibles."""
-    if forzar_simulado:
-        return "[SIMULADO]"
+    """Describe de forma clara la disponibilidad de OpenRouter y Groq."""
     if cliente_openrouter is None and cliente_groq is None:
-        return "[SIMULADO] (sin llaves configuradas)"
+        return "Sin proveedores disponibles (OpenRouter y Groq sin llaves configuradas)"
     if cliente_openrouter is not None and cliente_groq is not None:
         return (
             f"OpenRouter ({MODELO_LLAMA}) + respaldo automático Groq ({MODELO_RESPALDO_GROQ})"
         )
     if cliente_openrouter is not None:
-        return f"OpenRouter ({MODELO_LLAMA}) [sin respaldo Groq; último recurso: [SIMULADO]]"
-    return f"Groq ({MODELO_RESPALDO_GROQ}) [OpenRouter omitido; último recurso: [SIMULADO]]"
+        return f"OpenRouter ({MODELO_LLAMA}) [sin respaldo Groq]"
+    return f"Groq ({MODELO_RESPALDO_GROQ}) [OpenRouter no configurado]"
 
 
 # ==============================================================================
@@ -575,218 +571,8 @@ def detectar_escalamiento(mensaje: str) -> bool:
 
 
 # ==============================================================================
-# 6. MODO DE RESPALDO [SIMULADO] Y FUNCIÓN PRINCIPAL DE CONVERSACIÓN
+# 6. FUNCIÓN PRINCIPAL DE CONVERSACIÓN Y CADENA DE CONTINUIDAD
 # ==============================================================================
-
-
-def _filtrar_catalogo(datos_prospecto: dict) -> list[dict]:
-    """Filtra opciones del catálogo según tipo de propiedad y presupuesto."""
-    tipo = datos_prospecto.get("tipo_propiedad")
-    presupuesto_num = _parsear_presupuesto_numerico(datos_prospecto.get("presupuesto"))
-
-    candidatos = []
-    for dev in CATALOGO_DESARROLLOS:
-        coincide_tipo = True
-        if tipo == "casas":
-            coincide_tipo = "casa" in dev["tipo"]
-        elif tipo == "departamentos":
-            coincide_tipo = "departamento" in dev["tipo"]
-        elif tipo == "lotes":
-            coincide_tipo = "lote" in dev["tipo"]
-
-        coincide_presupuesto = True
-        if presupuesto_num is not None and dev["precio_desde"] is not None:
-            # Margen de tolerancia del 10% sobre el presupuesto indicado
-            coincide_presupuesto = dev["precio_desde"] <= int(presupuesto_num * 1.10)
-
-        if coincide_tipo and coincide_presupuesto:
-            candidatos.append(dev)
-
-    if candidatos:
-        return candidatos
-
-    # Si no hubo coincidencia exacta en ambos filtros, relajar solo tipo o presupuesto
-    if presupuesto_num is not None:
-        por_presupuesto = [
-            d
-            for d in CATALOGO_DESARROLLOS
-            if d["precio_desde"] is not None
-            and d["precio_desde"] <= int(presupuesto_num * 1.10)
-        ]
-        if por_presupuesto:
-            return por_presupuesto
-
-    return CATALOGO_DESARROLLOS[:2]
-
-
-def responder_simulado(
-    mensaje: str, historial: list[dict[str, str]], datos_prospecto: dict
-) -> str:
-    """
-    Último recurso local: genera una respuesta coherente con el catálogo y la
-    memoria de conversación cuando no hay llaves de OpenRouter ni de Groq o
-    ambos proveedores fallan. Todas las respuestas se marcan con `[SIMULADO]`.
-    """
-    normalizado = _normalizar_texto(mensaje)
-    nombre = datos_prospecto.get("nombre")
-    telefono = datos_prospecto.get("telefono")
-    presupuesto = datos_prospecto.get("presupuesto")
-    tipo = datos_prospecto.get("tipo_propiedad")
-    credito = datos_prospecto.get("credito")
-    desarrollo = datos_prospecto.get("desarrollo_interes")
-
-    # Verificar si ya se recomendó o confirmó visita anteriormente en el historial
-    historial_asistente = " ".join(
-        _normalizar_texto(m["content"])
-        for m in historial[:-1]
-        if m.get("role") == "assistant"
-    )
-    menciono_datos_en_turno = bool(
-        _extraer_nombre(mensaje) or _extraer_telefono(mensaje)
-    )
-
-    # 1. Confirmación de memoria explícita o cierre de horario de visita
-    pide_memoria = any(
-        frase in normalizado
-        for frase in ("recuerdas", "te acuerdas", "olvidaste", "sabes mi")
-    )
-    propone_horario = bool(
-        (nombre or telefono)
-        and re.search(
-            r"\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|horario|am|pm|\d{1,2}:\d{2})\b",
-            normalizado,
-        )
-    )
-    if (pide_memoria or propone_horario) and (nombre or presupuesto):
-        partes_memoria = []
-        if nombre:
-            partes_memoria.append(f"claro que sí, {nombre}")
-        if presupuesto:
-            partes_memoria.append(f"tengo presente tu presupuesto de {presupuesto}")
-        if desarrollo:
-            partes_memoria.append(f"tu interés en {desarrollo}")
-
-        if len(partes_memoria) > 1:
-            resumen_memoria = f"{', '.join(partes_memoria[:-1])} y {partes_memoria[-1]}"
-        else:
-            resumen_memoria = partes_memoria[0]
-
-        respuesta = f"[SIMULADO] ¡Por supuesto, {resumen_memoria}! "
-        if propone_horario:
-            respuesta += (
-                "Tomo nota de tu preferencia de horario para la visita. "
-                f"Un asesor de Sustentia se comunicará contigo desde {CONTACTO_ASESOR} "
-                "para confirmar la cita y compartirte el punto de encuentro en la zona."
-            )
-        else:
-            respuesta += (
-                "¿Te gustaría que agendemos tu visita? Un asesor te confirmará "
-                f"a través de {CONTACTO_ASESOR}."
-            )
-        return respuesta
-
-    # 2. Captura reciente de nombre y/o teléfono
-    if menciono_datos_en_turno:
-        if nombre and telefono:
-            contexto_busqueda = ""
-            if desarrollo and presupuesto:
-                contexto_busqueda = (
-                    f" sobre {desarrollo} considerando tu presupuesto de {presupuesto}"
-                )
-            elif presupuesto:
-                contexto_busqueda = f" considerando tu presupuesto de {presupuesto}"
-            return (
-                f"[SIMULADO] ¡Muchas gracias, {nombre}! Ya registré tu teléfono "
-                f"({telefono}) para dar seguimiento{contexto_busqueda}. "
-                "¿Qué día y horario te quedaría mejor para agendar una visita y conocer el desarrollo? "
-                f"Nuestro equipo confirmará tu cita por medio de {CONTACTO_ASESOR}."
-            )
-        if nombre and not telefono:
-            return (
-                f"[SIMULADO] ¡Mucho gusto, {nombre}! Para poder enviarte la información "
-                "y coordinar una visita, ¿me compartirías también un número de teléfono?"
-            )
-        if telefono and not nombre:
-            return (
-                f"[SIMULADO] ¡Gracias! Ya anoté el teléfono {telefono}. "
-                "¿Cuál es tu nombre para registrarte y proponerte horarios de visita?"
-            )
-
-    # 3. Pregunta sobre créditos aceptados
-    if credito or any(
-        p in normalizado for p in ("credito", "financiamiento", "infonavit", "fovissste")
-    ):
-        credito_txt = credito if credito else "Infonavit, Fovissste y bancario"
-        ref_dev = f" en {desarrollo}" if desarrollo else ""
-        ref_presupuesto = (
-            f" dentro de tu presupuesto de {presupuesto}" if presupuesto else ""
-        )
-        solicitud_datos = ""
-        if not nombre or not telefono:
-            solicitud_datos = (
-                " Para enviarte más detalles y revisar opciones de visita, "
-                "¿me compartes por favor tu nombre y número de teléfono?"
-            )
-        else:
-            solicitud_datos = (
-                f" {nombre}, ¿te gustaría que propongamos fecha para una visita? "
-                f"Puedes esperar confirmación al {CONTACTO_ASESOR}."
-            )
-        return (
-            f"[SIMULADO] ¡Sí! En Sustentia aceptamos créditos Infonavit, Fovissste y bancario, "
-            f"por lo que puedes utilizar tu crédito {credito_txt}{ref_dev}{ref_presupuesto}. "
-            "La disponibilidad vigente y requisitos particulares los revisa directamente un asesor "
-            "para darte información actualizada."
-            f"{solicitud_datos}"
-        )
-
-    # 4. Búsqueda con criterios (tipo, zona o presupuesto)
-    if tipo or presupuesto or datos_prospecto.get("zona"):
-        opciones = _filtrar_catalogo(datos_prospecto)
-        principal = opciones[0]
-        if not datos_prospecto.get("desarrollo_interes"):
-            datos_prospecto["desarrollo_interes"] = principal["nombre"]
-
-        if nombre:
-            inicio_rec = f"¡Excelente elección, {nombre}! Con tu presupuesto de {presupuesto}" if presupuesto else f"¡Excelente elección, {nombre}! Para lo que buscas"
-        else:
-            inicio_rec = f"¡Excelente elección! Con tu presupuesto de {presupuesto}" if presupuesto else "¡Excelente elección! Para lo que buscas"
-        recomendacion = (
-            f"[SIMULADO] {inicio_rec}, nuestra mejor opción es **{principal['nombre']}** "
-            f"({principal['tipo']} en {principal['zona']}, {principal['precio_texto']}, "
-            f"{principal['detalles']})."
-        )
-
-        # Si hay una segunda opción cercana (por ejemplo Torres Zojo), mencionarla brevemente
-        alternativas = [
-            d
-            for d in CATALOGO_DESARROLLOS
-            if d["nombre"] != principal["nombre"]
-            and d["precio_desde"] is not None
-            and _parsear_presupuesto_numerico(presupuesto) is not None
-            and d["precio_desde"] <= int(_parsear_presupuesto_numerico(presupuesto) * 1.10)
-        ]
-        if alternativas:
-            alt = alternativas[0]
-            recomendacion += (
-                f" Si también consideraras {alt['tipo']}, contamos con **{alt['nombre']}** "
-                f"({alt['zona']}, {alt['precio_texto']})."
-            )
-
-        if "agendar visita" not in historial_asistente:
-            recomendacion += (
-                " ¿Te gustaría saber qué créditos aceptamos (Infonavit, Fovissste o bancario) "
-                "o prefieres compartir tu nombre y teléfono para agendar una visita?"
-            )
-        return recomendacion
-
-    # 5. Saludo inicial sin criterios todavía
-    return (
-        "[SIMULADO] ¡Hola! Bienvenido a Sustentia, tu inmobiliaria en Morelia. "
-        "Con gusto te atiendo en este momento, incluso fuera de horario. "
-        "Para recomendarte las mejores opciones de nuestro catálogo, cuéntame por favor: "
-        "¿buscas casa, departamento o lote, en qué zona y cuál es tu presupuesto aproximado?"
-    )
 
 
 def _registrar_proveedor(datos: dict, proveedor: str) -> None:
@@ -819,19 +605,21 @@ def conversar(
     datos_prospecto: dict | None = None,
     cliente=None,
     modelo: str = MODELO_LLAMA,
-    forzar_simulado: bool = False,
     cliente_respaldo=None,
     modelo_respaldo: str = MODELO_RESPALDO_GROQ,
 ) -> str:
     """
-    Función principal del asistente con cadena de continuidad en 3 niveles:
+    Función principal del asistente con cadena de continuidad:
+    `OpenRouter (Llama) → Groq (respaldo) → asesor humano`.
+
     1. Captura datos del prospecto y registra el mensaje del usuario en el historial.
     2. Evalúa reglas de escalamiento deterministas (solicitud de persona o tema legal/fiscal).
     3. Intenta responder con el proveedor principal (OpenRouter / Llama).
     4. Ante cualquier error (402, 401, 429, red o servidor) o ausencia de llave
        principal, reintenta el mismo turno con Groq (`openai/gpt-oss-120b`, que NO es
        Llama sino respaldo de continuidad) preservando intacto el historial.
-    5. Si Groq tampoco está disponible o falla, recurre a `[SIMULADO]`.
+    5. Si Groq tampoco está disponible o también falla, marca `escalado=True`,
+       registra `Sin modelo disponible — escalado a asesor` y devuelve `MENSAJE_ESCALAMIENTO`.
     """
     datos = datos_prospecto if datos_prospecto is not None else DATOS_PROSPECTO_GLOBAL
     cliente_principal = cliente if cliente is not None else CLIENTE_OPENROUTER_GLOBAL
@@ -849,47 +637,46 @@ def conversar(
         agregar_mensaje(historial, "assistant", MENSAJE_ESCALAMIENTO)
         return MENSAJE_ESCALAMIENTO
 
-    if not forzar_simulado:
-        mensajes_envio = recortar_historial(historial)
+    mensajes_envio = recortar_historial(historial)
 
-        if cliente_principal is not None:
-            try:
-                contenido = _llamar_proveedor_openai(
-                    cliente_principal, modelo, mensajes_envio
-                )
-                _registrar_proveedor(datos, f"OpenRouter ({modelo})")
-                agregar_mensaje(historial, "assistant", contenido)
-                return contenido
-            except Exception as exc:
-                if cliente_groq_activo is not None:
-                    print(
-                        f"Aviso: error en OpenRouter ({exc}). "
-                        f"Reintentando turno con respaldo Groq ({modelo_respaldo})."
-                    )
-                else:
-                    print(
-                        f"Aviso: error en OpenRouter ({exc}). "
-                        "Sin respaldo Groq disponible; activando modo [SIMULADO]."
-                    )
-
-        if cliente_groq_activo is not None:
-            try:
-                contenido = _llamar_proveedor_openai(
-                    cliente_groq_activo, modelo_respaldo, mensajes_envio
-                )
-                _registrar_proveedor(datos, f"Groq ({modelo_respaldo})")
-                agregar_mensaje(historial, "assistant", contenido)
-                return contenido
-            except Exception as exc:
+    if cliente_principal is not None:
+        try:
+            contenido = _llamar_proveedor_openai(
+                cliente_principal, modelo, mensajes_envio
+            )
+            _registrar_proveedor(datos, f"OpenRouter ({modelo})")
+            agregar_mensaje(historial, "assistant", contenido)
+            return contenido
+        except Exception as exc:
+            if cliente_groq_activo is not None:
                 print(
-                    f"Aviso: error en respaldo Groq ({exc}). "
-                    "Activando último recurso [SIMULADO]."
+                    f"Aviso: error en OpenRouter ({exc}). "
+                    f"Reintentando turno con respaldo Groq ({modelo_respaldo})."
+                )
+            else:
+                print(
+                    f"Aviso: error en OpenRouter ({exc}). "
+                    "Sin respaldo Groq disponible; escalando a un asesor humano."
                 )
 
-    respuesta_local = responder_simulado(mensaje, historial, datos)
-    _registrar_proveedor(datos, "[SIMULADO]")
-    agregar_mensaje(historial, "assistant", respuesta_local)
-    return respuesta_local
+    if cliente_groq_activo is not None:
+        try:
+            contenido = _llamar_proveedor_openai(
+                cliente_groq_activo, modelo_respaldo, mensajes_envio
+            )
+            _registrar_proveedor(datos, f"Groq ({modelo_respaldo})")
+            agregar_mensaje(historial, "assistant", contenido)
+            return contenido
+        except Exception as exc:
+            print(
+                f"Aviso: error en respaldo Groq ({exc}). "
+                "Sin modelos disponibles; escalando a un asesor humano."
+            )
+
+    datos["escalado"] = True
+    _registrar_proveedor(datos, "Sin modelo disponible — escalado a asesor")
+    agregar_mensaje(historial, "assistant", MENSAJE_ESCALAMIENTO)
+    return MENSAJE_ESCALAMIENTO
 
 
 # Estado global por defecto para invocaciones directas `conversar(mensaje, historial)`
@@ -903,24 +690,24 @@ CLIENTE_GROQ_GLOBAL = None
 # ==============================================================================
 
 
-def ejecutar_demo(forzar_simulado: bool = False) -> None:
+def ejecutar_demo() -> None:
     """
-    Ejecuta la conversación de ejemplo completa:
+    Ejecuta la conversación de ejemplo completa cuando existe al menos un
+    proveedor configurado (`OPENROUTER_API_KEY` o `GROQ_API_KEY`):
     saludo -> búsqueda de casa ($1,300,000) -> recomendación de San Pedro ->
     duda de Infonavit -> captura de nombre y teléfono ficticio -> propuesta de visita
     + verificación de memoria y pruebas de escalamiento.
+    Si no hay llaves configuradas, muestra un aviso y termina sin fingir una demo.
     """
     global CLIENTE_OPENROUTER_GLOBAL, CLIENTE_GROQ_GLOBAL
 
-    api_key_openrouter = "" if forzar_simulado else obtener_api_key(permitir_prompt=False)
-    api_key_groq = "" if forzar_simulado else obtener_api_key_groq(permitir_prompt=False)
-    cliente = None if forzar_simulado else crear_cliente_openrouter(api_key_openrouter)
-    cliente_respaldo = None if forzar_simulado else crear_cliente_groq(api_key_groq)
+    api_key_openrouter = obtener_api_key(permitir_prompt=False)
+    api_key_groq = obtener_api_key_groq(permitir_prompt=False)
+    cliente = crear_cliente_openrouter(api_key_openrouter)
+    cliente_respaldo = crear_cliente_groq(api_key_groq)
     CLIENTE_OPENROUTER_GLOBAL = cliente
     CLIENTE_GROQ_GLOBAL = cliente_respaldo
-    proveedor_activo = describir_proveedor_activo(
-        cliente, cliente_respaldo, forzar_simulado=forzar_simulado
-    )
+    proveedor_activo = describir_proveedor_activo(cliente, cliente_respaldo)
 
     print("=" * 72)
     print("SustentIA — Asistente Inteligente con Llama")
@@ -930,8 +717,28 @@ def ejecutar_demo(forzar_simulado: bool = False) -> None:
         f"Respaldo automático: Groq ({GROQ_BASE_URL}) | Modelo: {MODELO_RESPALDO_GROQ} "
         "(no es Llama; continuidad operativa)"
     )
-    print("Último recurso: [SIMULADO]")
+    print("Sin modelo disponible: escalamiento a asesor humano")
     print("=" * 72)
+
+    if cliente is None and cliente_respaldo is None:
+        if not api_key_openrouter and not api_key_groq:
+            print(
+                "\nAviso: no hay ninguna API key configurada. "
+                "Para ejecutar la demostración necesitas configurar al menos "
+                "`OPENROUTER_API_KEY` (proveedor principal Llama) o "
+                "`GROQ_API_KEY` (respaldo automático)."
+            )
+        elif OpenAI is None:
+            print(
+                "\nAviso: falta instalar el paquete `openai` (`pip install openai`) "
+                "para conectarse con `OPENROUTER_API_KEY` o `GROQ_API_KEY`."
+            )
+        print(
+            "Sin un modelo disponible, SustentIA no contesta con respuestas prefabricadas: "
+            f"escala la conversación a un asesor humano («{MENSAJE_ESCALAMIENTO}»)."
+        )
+        print("=" * 72)
+        return
 
     historial = crear_historial()
     datos = crear_datos_prospecto()
@@ -953,7 +760,6 @@ def ejecutar_demo(forzar_simulado: bool = False) -> None:
             datos_prospecto=datos,
             cliente=cliente,
             cliente_respaldo=cliente_respaldo,
-            forzar_simulado=forzar_simulado,
         )
         print(
             f"[Turno {indice} | Proveedor: {datos['proveedor_usado']}] SustentIA: {respuesta}"
@@ -980,7 +786,6 @@ def ejecutar_demo(forzar_simulado: bool = False) -> None:
             datos_prospecto=datos_esc,
             cliente=cliente,
             cliente_respaldo=cliente_respaldo,
-            forzar_simulado=forzar_simulado,
         )
         print(f"  [{etiqueta}] Prospecto: {msg_esc}")
         print(
@@ -991,13 +796,4 @@ def ejecutar_demo(forzar_simulado: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Ejecuta la demo del asistente inmobiliario SustentIA."
-    )
-    parser.add_argument(
-        "--simulado",
-        action="store_true",
-        help="Fuerza la ejecución en modo [SIMULADO] sin usar OpenRouter ni Groq.",
-    )
-    argumentos = parser.parse_args()
-    ejecutar_demo(forzar_simulado=argumentos.simulado)
+    ejecutar_demo()
